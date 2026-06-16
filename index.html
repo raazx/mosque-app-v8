@@ -668,30 +668,56 @@ function cleanArabic(text) {
 }
 
 // ================================================================
-//  حساب نسبة التطابق بين نصين (Fuzzy Match ≥ 90%)
+//  حساب نسبة التطابق بين نصين — مقارنة تسلسلية كاملة
+// المنطق: الكلمات لازم تتواجد بنفس الترتيب ومتجاورة في النص الهدف
 // ================================================================
 function calcMatchScore(query, target) {
     if (!query || !target) return 0;
     const q = cleanArabic(query);
     const t = cleanArabic(target);
+    if (!q || !t) return 0;
 
-    // تطابق تام
+    // تطابق تام مباشر → 100%
     if (t.includes(q)) return 100;
 
-    // حساب نسبة الكلمات المتطابقة
     const qWords = q.split(/\s+/).filter(w => w.length > 1);
-    const tWords = t.split(/\s+/);
+    const tWords = t.split(/\s+/).filter(w => w.length > 0);
     if (qWords.length === 0) return 0;
 
-    let matched = 0;
-    for (const qw of qWords) {
-        // بحث بالكلمة الكاملة أو جذرها (أول 3 أحرف)
-        const root = qw.slice(0, Math.max(3, Math.floor(qw.length * 0.7)));
-        if (tWords.some(tw => tw === qw || tw.startsWith(root) || qw.startsWith(tw.slice(0, Math.max(3, Math.floor(tw.length * 0.7)))))) {
-            matched++;
+    // للنصوص القصيرة (كلمة واحدة أو كلمتين): مطابقة بالجذر فقط
+    if (qWords.length <= 2) {
+        let matched = 0;
+        for (const qw of qWords) {
+            const root = qw.slice(0, Math.max(3, Math.floor(qw.length * 0.75)));
+            if (tWords.some(tw => tw === qw || tw.includes(root) || qw.includes(tw.slice(0, Math.max(3, Math.floor(tw.length * 0.75)))))) {
+                matched++;
+            }
         }
+        return Math.round((matched / qWords.length) * 100);
     }
-    return Math.round((matched / qWords.length) * 100);
+
+    // للنصوص الأطول (ثلاث كلمات فأكثر): مطابقة تسلسلية صارمة
+    // نبحث عن أطول تسلسل متطابق متجاور بين كلمات السؤال وكلمات الهدف
+    let bestRun = 0;
+    for (let ti = 0; ti <= tWords.length - 1; ti++) {
+        let run = 0;
+        for (let qi = 0; qi < qWords.length && (ti + qi) < tWords.length; qi++) {
+            const qw = qWords[qi];
+            const tw = tWords[ti + qi];
+            const qRoot = qw.slice(0, Math.max(3, Math.floor(qw.length * 0.75)));
+            const tRoot = tw.slice(0, Math.max(3, Math.floor(tw.length * 0.75)));
+            // مطابقة الكلمة أو جذرها
+            if (qw === tw || tw.includes(qRoot) || qw.includes(tRoot)) {
+                run++;
+            } else {
+                break; // انكسر التسلسل
+            }
+        }
+        if (run > bestRun) bestRun = run;
+    }
+
+    // النسبة = أطول تسلسل متطابق / عدد كلمات السؤال
+    return Math.round((bestRun / qWords.length) * 100);
 }
 
 // ================================================================
@@ -737,27 +763,32 @@ function searchQuranOffline() {
         return;
     }
 
-    // المرحلة 1: بحث بتطابق 100% (النص كاملاً موجود في الآية)
+    const inputWords = cleanInput.split(/\s+/).filter(w => w.length > 1);
+    const isShortQuery = inputWords.length <= 2;
+
+    // للبحث القصير (كلمة-كلمتين): عتبة أعلى
+    // للبحث الطويل (جملة): نسبة تسلسلية صارمة
+    const threshold1 = isShortQuery ? 100 : 90;
+    const threshold2 = isShortQuery ? 100 : 75;
+
     let scored = [];
     for (const ayah of QURAN_DB) {
         const score = calcMatchScore(cleanInput, ayah.q);
-        if (score >= 90) scored.push({ ayah, score });
+        if (score >= threshold1) scored.push({ ayah, score });
     }
 
-    // المرحلة 2: إذا لم نجد بـ 90%، نخفض لـ 70%
     if (scored.length === 0) {
         for (const ayah of QURAN_DB) {
             const score = calcMatchScore(cleanInput, ayah.q);
-            if (score >= 70) scored.push({ ayah, score });
+            if (score >= threshold2) scored.push({ ayah, score });
         }
     }
 
-    // المرحلة 3: إذا لم نجد، بحث بأي كلمة رئيسية
-    if (scored.length === 0) {
-        const words = cleanInput.split(/\s+/).filter(w => w.length > 2);
+    // فقط للبحث القصير: نسمح بنتائج جزئية
+    if (scored.length === 0 && isShortQuery) {
         for (const ayah of QURAN_DB) {
             const score = calcMatchScore(cleanInput, ayah.q);
-            if (score > 0) scored.push({ ayah, score });
+            if (score >= 75) scored.push({ ayah, score });
         }
     }
 
@@ -812,26 +843,28 @@ function searchHadithOffline() {
         return;
     }
 
-    // المرحلة 1: تطابق ≥ 90%
+    const inputWordsH = cleanInput.split(/\s+/).filter(w => w.length > 1);
+    const isShortH = inputWordsH.length <= 2;
+    const thresh1H = isShortH ? 100 : 90;
+    const thresh2H = isShortH ? 100 : 75;
+
     let scored = [];
     for (const h of HADITH_DB) {
         const score = calcMatchScore(cleanInput, h.q);
-        if (score >= 90) scored.push({ h, score });
+        if (score >= thresh1H) scored.push({ h, score });
     }
 
-    // المرحلة 2: تطابق ≥ 70%
     if (scored.length === 0) {
         for (const h of HADITH_DB) {
             const score = calcMatchScore(cleanInput, h.q);
-            if (score >= 70) scored.push({ h, score });
+            if (score >= thresh2H) scored.push({ h, score });
         }
     }
 
-    // المرحلة 3: أي تطابق جزئي
-    if (scored.length === 0) {
+    if (scored.length === 0 && isShortH) {
         for (const h of HADITH_DB) {
             const score = calcMatchScore(cleanInput, h.q);
-            if (score > 0) scored.push({ h, score });
+            if (score >= 75) scored.push({ h, score });
         }
     }
 
@@ -976,13 +1009,18 @@ function detectReferences(text) {
     const cleanText = cleanArabic(text);
     const found = [];
 
+    const spokenWords = cleanText.split(/\s+/).filter(w => w.length > 1);
+    // للكشف التلقائي: نحتاج على الأقل 5 كلمات ونسبة تسلسلية ≥ 85%
+    if (spokenWords.length < 4) return;
+    const detectThreshold = 85;
+
     // بحث في القرآن
     if (QURAN_DB) {
         let bestQuran = null;
         let bestScore = 0;
         for (const ayah of QURAN_DB) {
             const score = calcMatchScore(cleanText, ayah.q);
-            if (score > bestScore && score >= 75) {
+            if (score > bestScore && score >= detectThreshold) {
                 bestScore = score;
                 bestQuran = { ayah, score };
             }
@@ -1002,7 +1040,7 @@ function detectReferences(text) {
         let bestScore = 0;
         for (const h of HADITH_DB) {
             const score = calcMatchScore(cleanText, h.q);
-            if (score > bestScore && score >= 75) {
+            if (score > bestScore && score >= detectThreshold) {
                 bestScore = score;
                 bestHadith = { h, score };
             }
