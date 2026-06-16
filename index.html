@@ -595,6 +595,7 @@
 const FIREBASE_DB_URL = "https://mosqa-app-default-rtdb.asia-southeast1.firebasedatabase.app/sermon.json";
 let lastTimestamp = 0;
 let lastText = "";
+let currentArabicText = ""; // آخر نص عربي مسموع أو مستقبل (لإعادة الكشف عند تغيير اللغة)
 
 // قواعد البيانات المحلية
 let QURAN_DB = null;
@@ -946,18 +947,19 @@ function initLocalRecognition() {
         const spoken = (final || interim).trim();
         if (!spoken) return;
 
+        // تحديث النص الحالي
+        currentArabicText = spoken;
+
         // عرض النص العربي المسموع
         const arabicBox = document.getElementById('arabic-live');
         arabicBox.textContent = spoken;
         arabicBox.classList.add('visible');
 
-        // تجميع النص النهائي للترجمة والكشف
-        recognitionBuffer = spoken;
-
         // ترجمة فورية
         runTranslation(spoken);
 
-        // كشف الآيات والأحاديث بعد توقف قصير
+        // مسح النتائج القديمة وإعادة الكشف بالنص الجديد
+        clearReferenceBox();
         clearTimeout(detectionTimer);
         detectionTimer = setTimeout(() => detectReferences(spoken), 1200);
     };
@@ -1096,6 +1098,14 @@ function renderReferences(items) {
     box.classList.add('visible');
 }
 
+function clearReferenceBox() {
+    const box = document.getElementById('references-box');
+    const list = document.getElementById('references-list');
+    if (list) list.innerHTML = '';
+    if (box) box.classList.remove('visible');
+    shownRefs.clear();
+}
+
 // ================================================================
 //  التنقل بين الصفحات
 // ================================================================
@@ -1134,6 +1144,7 @@ function listenToCloud() {
             if (data && data.text && data.timestamp !== lastTimestamp) {
                 lastTimestamp = data.timestamp;
                 lastText = data.text;
+                currentArabicText = data.text;
 
                 // عرض النص العربي القادم من Firebase
                 const arabicBox = document.getElementById('arabic-live');
@@ -1143,7 +1154,8 @@ function listenToCloud() {
                 // ترجمة فورية
                 runTranslation(lastText);
 
-                // كشف الآيات والأحاديث
+                // مسح النتائج القديمة وإعادة الكشف
+                clearReferenceBox();
                 clearTimeout(detectionTimer);
                 detectionTimer = setTimeout(() => detectReferences(lastText), 1200);
             }
@@ -1168,7 +1180,15 @@ function changeLanguage() {
     const select = document.getElementById('lang-select');
     const isRtl = select.options[select.selectedIndex].getAttribute('data-rtl') === 'true';
     document.getElementById('translation-output').className = isRtl ? 'translation-display rtl' : 'translation-display ltr';
-    if (lastText) runTranslation(lastText);
+    // إعادة الترجمة باللغة الجديدة
+    const textToTranslate = currentArabicText || lastText;
+    if (textToTranslate) runTranslation(textToTranslate);
+    // إعادة الكشف عن الآيات والأحاديث بالنص الحالي
+    if (textToTranslate) {
+        clearReferenceBox();
+        clearTimeout(detectionTimer);
+        detectionTimer = setTimeout(() => detectReferences(textToTranslate), 500);
+    }
 }
 
 function speak() {
