@@ -938,30 +938,32 @@ function initLocalRecognition() {
     rec.interimResults = true;
 
     rec.onresult = function(event) {
-        let interim = '';
-        let final = '';
+        let interimText = '';
+        let finalText = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
-            if (event.results[i].isFinal) final += event.results[i][0].transcript;
-            else interim += event.results[i][0].transcript;
+            if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
+            else interimText += event.results[i][0].transcript;
         }
-        const spoken = (final || interim).trim();
-        if (!spoken) return;
 
-        // تحديث النص الحالي
-        currentArabicText = spoken;
+        // عرض النص المؤقت فوراً للمستخدم
+        const displayText = (finalText || interimText).trim();
+        if (!displayText) return;
 
-        // عرض النص العربي المسموع
         const arabicBox = document.getElementById('arabic-live');
-        arabicBox.textContent = spoken;
+        arabicBox.textContent = displayText;
         arabicBox.classList.add('visible');
 
-        // ترجمة فورية
-        runTranslation(spoken);
-
-        // مسح النتائج القديمة وإعادة الكشف بالنص الجديد
-        clearReferenceBox();
-        clearTimeout(detectionTimer);
-        detectionTimer = setTimeout(() => detectReferences(spoken), 1200);
+        if (finalText.trim()) {
+            // ✅ نص نهائي: نترجم ونكشف ونحدث المتغير
+            currentArabicText = finalText.trim();
+            runTranslation(currentArabicText);
+            // لا نمسح النتائج القديمة — فقط نضيف إليها
+            clearTimeout(detectionTimer);
+            detectionTimer = setTimeout(() => detectReferences(currentArabicText), 1500);
+        } else {
+            // ⏳ نص مؤقت: نترجم بس لا نكشف (لتجنب الوميض السريع)
+            runTranslation(interimText.trim());
+        }
     };
 
     rec.onerror = function(e) {
@@ -1154,10 +1156,9 @@ function listenToCloud() {
                 // ترجمة فورية
                 runTranslation(lastText);
 
-                // مسح النتائج القديمة وإعادة الكشف
-                clearReferenceBox();
+                // لا نمسح النتائج القديمة — فقط نضيف إليها
                 clearTimeout(detectionTimer);
-                detectionTimer = setTimeout(() => detectReferences(lastText), 1200);
+                detectionTimer = setTimeout(() => detectReferences(lastText), 1500);
             }
         } catch (e) { /* Firebase standby */ }
     }, 1500);
@@ -1180,15 +1181,9 @@ function changeLanguage() {
     const select = document.getElementById('lang-select');
     const isRtl = select.options[select.selectedIndex].getAttribute('data-rtl') === 'true';
     document.getElementById('translation-output').className = isRtl ? 'translation-display rtl' : 'translation-display ltr';
-    // إعادة الترجمة باللغة الجديدة
+    // إعادة الترجمة باللغة الجديدة فقط (بدون مسح النتائج)
     const textToTranslate = currentArabicText || lastText;
     if (textToTranslate) runTranslation(textToTranslate);
-    // إعادة الكشف عن الآيات والأحاديث بالنص الحالي
-    if (textToTranslate) {
-        clearReferenceBox();
-        clearTimeout(detectionTimer);
-        detectionTimer = setTimeout(() => detectReferences(textToTranslate), 500);
-    }
 }
 
 function speak() {
