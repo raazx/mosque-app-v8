@@ -335,6 +335,127 @@
         @keyframes blink { 50% { opacity: 0.3; } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ===== SPEECH RECOGNITION ===== */
+        .speech-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            background: #f8faf9;
+            border: 1px solid #ddeee6;
+            border-radius: 12px;
+            padding: 10px 14px;
+        }
+        .btn-mic {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 9px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+        .btn-mic.recording {
+            background: #c0392b;
+            animation: micPulse 1.2s infinite;
+        }
+        .mic-status {
+            font-size: 11px;
+            color: #777;
+            font-weight: bold;
+            flex: 1;
+        }
+        .mic-status.active { color: #c0392b; }
+
+        /* ===== ARABIC TEXT DISPLAY ===== */
+        .arabic-live-box {
+            background: #fffbf2;
+            border: 1px solid #f0e0b0;
+            border-right: 4px solid var(--gold);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-size: 16px;
+            line-height: 1.8;
+            color: #1a1a1a;
+            font-family: 'Traditional Arabic', system-ui, sans-serif;
+            font-weight: bold;
+            min-height: 50px;
+            margin-bottom: 12px;
+            direction: rtl;
+            text-align: right;
+            display: none;
+        }
+        .arabic-live-box.visible { display: block; animation: fadeIn 0.3s ease; }
+
+        /* ===== DETECTED REFERENCES ===== */
+        .references-box {
+            display: none;
+            margin-top: 14px;
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid #e8f0ec;
+        }
+        .references-box.visible { display: block; animation: fadeIn 0.4s ease; }
+        .ref-header {
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            color: var(--light-bg);
+            padding: 10px 16px;
+            font-size: 12px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .ref-item {
+            background: white;
+            padding: 12px 16px;
+            border-bottom: 1px solid #f0f4f2;
+        }
+        .ref-item:last-child { border-bottom: none; }
+        .ref-type-badge {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: bold;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-bottom: 6px;
+        }
+        .ref-type-quran { background: #fdf0ee; color: var(--quran-color); }
+        .ref-type-hadith { background: #eef3f8; color: var(--hadith-color); }
+        .ref-text {
+            font-size: 15px;
+            font-weight: bold;
+            color: #111;
+            line-height: 1.7;
+            font-family: 'Traditional Arabic', system-ui, sans-serif;
+            margin-bottom: 5px;
+        }
+        .ref-source {
+            font-size: 11px;
+            color: #888;
+            font-weight: bold;
+        }
+        .ref-meaning {
+            font-size: 12px;
+            color: #555;
+            background: #f9f9f9;
+            padding: 8px 10px;
+            border-radius: 6px;
+            margin-top: 6px;
+            border-right: 3px solid var(--gold);
+        }
+        @keyframes micPulse {
+            0% { box-shadow: 0 0 0 0 rgba(192,57,43,0.4); }
+            70% { box-shadow: 0 0 0 8px rgba(192,57,43,0); }
+            100% { box-shadow: 0 0 0 0 rgba(192,57,43,0); }
+        }
     </style>
 </head>
 <body>
@@ -361,16 +482,34 @@
     <div id="tab-home" class="app-page active">
         <div class="main-card">
             <div class="section-title">🌍 ترجمة الخطبة المباشرة | Live Translation</div>
+
+            <!-- شريط الميكروفون -->
+            <div class="speech-bar">
+                <button id="mic-btn" class="btn-mic" onclick="toggleMic()">🎙️ تشغيل الميكروفون</button>
+                <span id="mic-status" class="mic-status">اضغط لتشغيل التعرف على الكلام المباشر</span>
+            </div>
+
+            <!-- النص العربي المسموع -->
+            <div id="arabic-live" class="arabic-live-box"></div>
+
             <select id="lang-select" onchange="changeLanguage()">
                 <option value="en" data-rtl="false">English (الإنجليزية)</option>
                 <option value="ur" data-rtl="true">اردو (الأوردو)</option>
                 <option value="bn" data-rtl="false">বাংলা (البنغالية)</option>
                 <option value="id" data-rtl="false">Bahasa Indonesia (الإندونيسية)</option>
             </select>
+
             <div id="translation-output" class="translation-display ltr">Waiting for the speech to begin...</div>
+
             <div class="action-bar">
                 <div class="live-status"><div class="pulse"></div><span>البث المباشر متصل</span></div>
                 <button class="btn-listen" onclick="speak()">🔊 استمع / Listen</button>
+            </div>
+
+            <!-- الآيات والأحاديث المكتشفة -->
+            <div id="references-box" class="references-box">
+                <div class="ref-header">✨ آيات وأحاديث مذكورة في الخطبة — تعرُّف تلقائي</div>
+                <div id="references-list"></div>
             </div>
         </div>
     </div>
@@ -465,36 +604,50 @@ let dbLoadStatus = { quran: false, hadith: false };
 // ================================================================
 //  تحميل قواعد البيانات
 // ================================================================
-async function loadDatabases() {
+async function loadDatabases(showUI = false) {
     const statusEl = document.getElementById('data-status');
     const statusText = document.getElementById('status-text');
 
     try {
-        statusEl.className = 'status-bar loading';
-        statusText.textContent = 'جاري تحميل فهرس القرآن الكريم (3.5 MB)...';
+        if (showUI && statusEl) {
+            statusEl.className = 'status-bar loading';
+            statusText.textContent = 'جاري تحميل فهرس القرآن الكريم (3.5 MB)...';
+        }
 
-        const quranRes = await fetch('data/quran_index.json');
-        if (!quranRes.ok) throw new Error('quran_index.json not found');
-        QURAN_DB = await quranRes.json();
-        dbLoadStatus.quran = true;
+        if (!QURAN_DB) {
+            const quranRes = await fetch('data/quran_index.json');
+            if (!quranRes.ok) throw new Error('quran_index.json not found');
+            QURAN_DB = await quranRes.json();
+            dbLoadStatus.quran = true;
+        }
 
-        statusText.textContent = 'جاري تحميل فهرس الأحاديث (9 MB)...';
+        if (showUI && statusEl) statusText.textContent = 'جاري تحميل فهرس الأحاديث (9 MB)...';
 
-        const hadithRes = await fetch('data/hadith_index.json');
-        if (!hadithRes.ok) throw new Error('hadith_index.json not found');
-        HADITH_DB = await hadithRes.json();
-        dbLoadStatus.hadith = true;
+        if (!HADITH_DB) {
+            const hadithRes = await fetch('data/hadith_index.json');
+            if (!hadithRes.ok) throw new Error('hadith_index.json not found');
+            HADITH_DB = await hadithRes.json();
+            dbLoadStatus.hadith = true;
+        }
 
-        statusEl.className = 'status-bar';
-        statusEl.innerHTML = `<span>✅</span> <span>قاعدة البيانات جاهزة — ${QURAN_DB.length.toLocaleString('ar')} آية + ${HADITH_DB.length.toLocaleString('ar')} حديث • بحث فوري بدون إنترنت</span>`;
+        if (showUI && statusEl) {
+            statusEl.className = 'status-bar';
+            statusEl.innerHTML = `<span>✅</span> <span>قاعدة البيانات جاهزة — ${QURAN_DB.length.toLocaleString('ar')} آية + ${HADITH_DB.length.toLocaleString('ar')} حديث • بحث فوري بدون إنترنت</span>`;
+            showRandomAyah();
+            showRandomHadith();
+        }
 
-        // عرض آية وحديث عشوائيين
-        showRandomAyah();
-        showRandomHadith();
+        // تحديث شريط الميكروفون بعد تحميل القاعدة
+        const micStatus = document.getElementById('mic-status');
+        if (micStatus && !isLocalRecording) {
+            micStatus.textContent = '✅ جاهز — اضغط لتشغيل التعرف على كلام الخطيب';
+        }
 
     } catch (e) {
-        statusEl.className = 'status-bar error';
-        statusEl.innerHTML = `<span>❌</span> <span>تعذر تحميل قاعدة البيانات — تأكد من وجود ملفات data/quran_index.json و data/hadith_index.json</span>`;
+        if (showUI && statusEl) {
+            statusEl.className = 'status-bar error';
+            statusEl.innerHTML = `<span>❌</span> <span>تعذر تحميل قاعدة البيانات — تأكد من وجود ملفات data/quran_index.json و data/hadith_index.json</span>`;
+        }
         console.error('DB Load Error:', e);
     }
 }
@@ -734,6 +887,178 @@ function highlightArabic(text, query) {
 }
 
 // ================================================================
+//  محرك Speech Recognition المحلي
+// ================================================================
+let localRecognition = null;
+let isLocalRecording = false;
+let recognitionBuffer = '';
+let detectionTimer = null;
+let shownRefs = new Set(); // لتجنب تكرار عرض نفس المرجع
+
+function initLocalRecognition() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) return null;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.lang = 'ar-SA';
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    rec.onresult = function(event) {
+        let interim = '';
+        let final = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) final += event.results[i][0].transcript;
+            else interim += event.results[i][0].transcript;
+        }
+        const spoken = (final || interim).trim();
+        if (!spoken) return;
+
+        // عرض النص العربي المسموع
+        const arabicBox = document.getElementById('arabic-live');
+        arabicBox.textContent = spoken;
+        arabicBox.classList.add('visible');
+
+        // تجميع النص النهائي للترجمة والكشف
+        recognitionBuffer = spoken;
+
+        // ترجمة فورية
+        runTranslation(spoken);
+
+        // كشف الآيات والأحاديث بعد توقف قصير
+        clearTimeout(detectionTimer);
+        detectionTimer = setTimeout(() => detectReferences(spoken), 1200);
+    };
+
+    rec.onerror = function(e) {
+        if (e.error !== 'no-speech') stopLocalMic();
+    };
+    rec.onend = function() {
+        if (isLocalRecording) rec.start();
+    };
+    return rec;
+}
+
+function toggleMic() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        alert('متصفحك لا يدعم التعرف على الصوت. استخدم Chrome.');
+        return;
+    }
+    if (isLocalRecording) stopLocalMic();
+    else startLocalMic();
+}
+
+function startLocalMic() {
+    if (!localRecognition) localRecognition = initLocalRecognition();
+    if (!localRecognition) return;
+    localRecognition.start();
+    isLocalRecording = true;
+    shownRefs.clear();
+    document.getElementById('mic-btn').textContent = '🔴 إيقاف الميكروفون';
+    document.getElementById('mic-btn').classList.add('recording');
+    document.getElementById('mic-status').textContent = '🔴 يستمع ويتعرف على كلام الخطيب...';
+    document.getElementById('mic-status').classList.add('active');
+}
+
+function stopLocalMic() {
+    if (localRecognition) localRecognition.stop();
+    isLocalRecording = false;
+    document.getElementById('mic-btn').textContent = '🎙️ تشغيل الميكروفون';
+    document.getElementById('mic-btn').classList.remove('recording');
+    document.getElementById('mic-status').textContent = 'الميكروفون موقف';
+    document.getElementById('mic-status').classList.remove('active');
+}
+
+// ================================================================
+//  كشف الآيات والأحاديث من النص المسموع
+// ================================================================
+function detectReferences(text) {
+    if (!QURAN_DB && !HADITH_DB) return;
+    const cleanText = cleanArabic(text);
+    const found = [];
+
+    // بحث في القرآن
+    if (QURAN_DB) {
+        let bestQuran = null;
+        let bestScore = 0;
+        for (const ayah of QURAN_DB) {
+            const score = calcMatchScore(cleanText, ayah.q);
+            if (score > bestScore && score >= 75) {
+                bestScore = score;
+                bestQuran = { ayah, score };
+            }
+        }
+        if (bestQuran) {
+            const key = `q_${bestQuran.ayah.s}_${bestQuran.ayah.v}`;
+            if (!shownRefs.has(key)) {
+                found.push({ type: 'quran', data: bestQuran.ayah, score: bestQuran.score });
+                shownRefs.add(key);
+            }
+        }
+    }
+
+    // بحث في الأحاديث
+    if (HADITH_DB) {
+        let bestHadith = null;
+        let bestScore = 0;
+        for (const h of HADITH_DB) {
+            const score = calcMatchScore(cleanText, h.q);
+            if (score > bestScore && score >= 75) {
+                bestScore = score;
+                bestHadith = { h, score };
+            }
+        }
+        if (bestHadith) {
+            const key = `h_${bestHadith.h.id}`;
+            if (!shownRefs.has(key)) {
+                found.push({ type: 'hadith', data: bestHadith.h, score: bestHadith.score });
+                shownRefs.add(key);
+            }
+        }
+    }
+
+    if (found.length > 0) renderReferences(found);
+}
+
+function renderReferences(items) {
+    const box = document.getElementById('references-box');
+    const list = document.getElementById('references-list');
+
+    items.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'ref-item';
+        div.style.animation = 'fadeIn 0.4s ease';
+
+        if (item.type === 'quran') {
+            const a = item.data;
+            const scoreColor = item.score >= 90 ? '#1a7a4a' : '#b07800';
+            div.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span class="ref-type-badge ref-type-quran">📖 آية قرآنية</span>
+                    <span style="font-size:10px;font-weight:bold;color:${scoreColor};background:${item.score>=90?'#e8f5ee':'#fff8e1'};padding:2px 8px;border-radius:10px;">تطابق ${item.score}%</span>
+                </div>
+                <div class="ref-text">﴿ ${a.t} ﴾</div>
+                <div class="ref-source">سورة ${a.sn} — الآية ${a.v} — جزء ${a.j}</div>
+                ${a.e ? `<div class="ref-meaning"><strong>📘 المعنى:</strong> ${a.e}</div>` : ''}
+            `;
+        } else {
+            const h = item.data;
+            const scoreColor = item.score >= 90 ? '#1a7a4a' : '#b07800';
+            div.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span class="ref-type-badge ref-type-hadith">✨ حديث نبوي</span>
+                    <span style="font-size:10px;font-weight:bold;color:${scoreColor};background:${item.score>=90?'#e8f5ee':'#fff8e1'};padding:2px 8px;border-radius:10px;">تطابق ${item.score}%</span>
+                </div>
+                <div class="ref-text">« ${h.t} »</div>
+                <div class="ref-source">${h.b} — حديث رقم ${h.n}</div>
+            `;
+        }
+        list.appendChild(div);
+    });
+
+    box.classList.add('visible');
+}
+
+// ================================================================
 //  التنقل بين الصفحات
 // ================================================================
 function navigateTo(targetPage) {
@@ -755,10 +1080,8 @@ function navigateTo(targetPage) {
         document.getElementById('nav-knowledge').classList.add('active');
         mainTitle.textContent = '📖 الموسوعة الإسلامية الرقمية';
         subTitle.textContent = 'بحث فوري Offline في المصحف الشريف والسنة النبوية';
-        // تحميل قاعدة البيانات عند أول زيارة للصفحة
-        if (!dbLoadStatus.quran && !dbLoadStatus.hadith) {
-            loadDatabases();
-        }
+        // تحميل قاعدة البيانات مع عرض الواجهة
+        loadDatabases(true);
     }
 }
 
@@ -773,7 +1096,18 @@ function listenToCloud() {
             if (data && data.text && data.timestamp !== lastTimestamp) {
                 lastTimestamp = data.timestamp;
                 lastText = data.text;
+
+                // عرض النص العربي القادم من Firebase
+                const arabicBox = document.getElementById('arabic-live');
+                arabicBox.textContent = lastText;
+                arabicBox.classList.add('visible');
+
+                // ترجمة فورية
                 runTranslation(lastText);
+
+                // كشف الآيات والأحاديث
+                clearTimeout(detectionTimer);
+                detectionTimer = setTimeout(() => detectReferences(lastText), 1200);
             }
         } catch (e) { /* Firebase standby */ }
     }, 1500);
@@ -817,7 +1151,8 @@ function speak() {
 // ================================================================
 window.onload = function () {
     listenToCloud();
-    // لا نحمل قاعدة البيانات إلا عند الحاجة (عند الضغط على تبويب القرآن)
+    // تحميل قاعدة البيانات في الخلفية لتجهيز الكشف التلقائي
+    loadDatabases();
 };
 </script>
 </body>
