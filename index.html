@@ -602,7 +602,8 @@
 const FIREBASE_DB_URL = "https://mosqa-app-default-rtdb.asia-southeast1.firebasedatabase.app/sermon.json";
 // Gemini API — مُقسَّم لتجنب فلاتر الأمان
 const _gk = ['AQ.Ab8RN6K9H6LUzGet0', 'RowgKdc2u_79Ui9OLATkuztaC', '-XwkcXBQ'].join('');
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${_gk}`;
+// gemini-2.5-flash-lite: الأسرع والأخف ضغطاً على الكوتا
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${_gk}`;
 let lastTimestamp = 0;
 let lastText = "";
 let currentArabicText = ""; // آخر نص عربي مسموع أو مستقبل (لإعادة الكشف عند تغيير اللغة)
@@ -1155,20 +1156,14 @@ async function detectReferences(spokenText) {
 }
 
 async function askGemini(spokenText) {
-    const prompt = `أنت مساعد إسلامي متخصص في القرآن الكريم والحديث النبوي.
-النص المسموع من خطبة الجمعة:
-"${spokenText}"
+    const prompt = `أنت مساعد إسلامي متخصص في القرآن والحديث.
+النص: "${spokenText}"
 
-إذا كان النص يحتوي على آية قرآنية أو حديث نبوي، فأجب بهذا الشكل الدقيق فقط بدون شرح إضافي:
-{
-  "found": true,
-  "type": "quran" أو "hadith",
-  "ref": "اسم السورة ورقم الآية أو اسم الكتاب",
-  "text": "النص الكامل للآية أو الحديث",
-  "tafsir": "تفسير مختصر لا يتجاوز جملتين"
-}
-إذا لم يحتوي على آية أو حديث واضح، فأجب فقط:
-{"found": false}`;
+مهم: أجب بـ JSON نظيف فقط بدون أي نص قبله أو بعده.
+إذا وجدت آية أو حديث:
+{"found":true,"type":"quran","ref":"اسم السورة ورقم الآية","text":"النص الكامل","tafsir":"تفسير مختصر"}
+إذا لم تجد:
+{"found":false}`;
 
     const res = await fetch(GEMINI_URL, {
         method: 'POST',
@@ -1182,12 +1177,29 @@ async function askGemini(spokenText) {
     if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
     const data = await res.json();
     const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!raw) return null;
 
-    // استخراج JSON من الرد
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    // استخراج JSON — يتعامل مع ```json ... ``` وبدونها
+    let jsonStr = raw
+        .replace(/```json\s*/gi, '')
+        .replace(/```\s*/g, '')
+        .trim();
+
+    // نأخذ أول { ... } في النص
+    const jsonMatch = jsonStr.match(/\{[\s\S]*?\}/);
     if (!jsonMatch) return null;
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (!parsed.found) return null;
+
+    let parsed;
+    try {
+        parsed = JSON.parse(jsonMatch[0]);
+    } catch(e) {
+        // محاولة ثانية باستخراج أكبر كتلة JSON
+        const bigMatch = raw.match(/\{[\s\S]*\}/);
+        if (!bigMatch) return null;
+        try { parsed = JSON.parse(bigMatch[0]); } catch(e2) { return null; }
+    }
+
+    if (!parsed || !parsed.found) return null;
 
     return {
         type:   parsed.type   || 'quran',
