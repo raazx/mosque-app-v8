@@ -1121,26 +1121,75 @@ function detectReferences(spokenText) {
     const container = document.getElementById('insight-container');
     if (!container) return;
 
-    const candidates = [];
+    const spoken = normalizeArabic(spokenText);
+    const spWords = spoken.split(' ').filter(w => w.length > 2);
+    if (spWords.length < 3) return; // نحتاج على الأقل 3 كلمات مفيدة
+
+    let bestEntry = null;
+    let bestScore = 0;
+
+    // ── 1. بحث أولاً في DETECTION_DB (الأسرع — كلمات مفتاحية جاهزة) ──
     DETECTION_DB.forEach(entry => {
-        let bestScore = 0;
+        let entryBest = 0;
         entry.kw.forEach(keyword => {
             const score = calcDetectScore(spokenText, keyword);
-            if (score > bestScore) bestScore = score;
+            if (score > entryBest) entryBest = score;
         });
-        if (bestScore >= 0.45) candidates.push({ ...entry, score: bestScore });
+        if (entryBest > bestScore) {
+            bestScore = entryBest;
+            bestEntry = {
+                type: entry.type,
+                ref:  entry.ref,
+                text: entry.text,
+                tafsir: entry.tafsir,
+                score: entryBest
+            };
+        }
     });
 
-    if (!candidates.length) return;
+    // ── 2. بحث في quran_index.json الكامل (6,236 آية) ──
+    if (QURAN_DB) {
+        for (const ayah of QURAN_DB) {
+            const score = calcDetectScore(spokenText, ayah.q);
+            if (score > bestScore) {
+                bestScore = score;
+                bestEntry = {
+                    type:   'quran',
+                    ref:    `سورة ${ayah.sn} — الآية ${ayah.v}`,
+                    text:   ayah.t,
+                    tafsir: ayah.e ? `المعنى: ${ayah.e}` : `جزء ${ayah.j} — صفحة ${ayah.p}`,
+                    score:  score
+                };
+            }
+        }
+    }
 
-    candidates.sort((a, b) => b.score - a.score);
-    const best = candidates[0];
+    // ── 3. بحث في hadith_index.json ──
+    if (HADITH_DB) {
+        for (const h of HADITH_DB) {
+            const score = calcDetectScore(spokenText, h.q);
+            if (score > bestScore) {
+                bestScore = score;
+                bestEntry = {
+                    type:   'hadith',
+                    ref:    `${h.b} — حديث ${h.n}`,
+                    text:   h.t,
+                    tafsir: '',
+                    score:  score
+                };
+            }
+        }
+    }
 
-    if (best.ref === _lastShownRef) return;
-    _lastShownRef = best.ref;
-    _shownInSession.add(best.ref);
+    // ── عرض أفضل نتيجة إذا تجاوزت 45% ──
+    if (!bestEntry || bestScore < 0.45) return;
+    if (bestEntry.ref === _lastShownRef) return;
 
-    showInsightCard(best, container);
+    _lastShownRef = bestEntry.ref;
+    _shownInSession.add(bestEntry.ref);
+    bestEntry.score = bestScore;
+
+    showInsightCard(bestEntry, container);
 }
 
 function showInsightCard(entry, container) {
