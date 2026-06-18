@@ -462,6 +462,10 @@
             70% { box-shadow: 0 0 0 8px rgba(192,57,43,0); }
             100% { box-shadow: 0 0 0 0 rgba(192,57,43,0); }
         }
+        @keyframes insightSlideIn {
+            from { opacity: 0; transform: translateY(10px) scale(0.97); }
+            to   { opacity: 1; transform: none; }
+        }
     </style>
 </head>
 <body>
@@ -513,10 +517,7 @@
             </div>
 
             <!-- الآيات والأحاديث المكتشفة -->
-            <div id="references-box" class="references-box">
-                <div class="ref-header">✨ آيات وأحاديث مذكورة في الخطبة — تعرُّف تلقائي</div>
-                <div id="references-list"></div>
-            </div>
+            <div id="insight-container"></div>
         </div>
     </div>
 
@@ -996,6 +997,10 @@ function startLocalMic() {
     localRecognition.start();
     isLocalRecording = true;
     shownRefs.clear();
+    resetDetection(); // مسح حالة الكشف عند بدء جلسة جديدة
+    // مسح البطاقة القديمة
+    const container = document.getElementById('insight-container');
+    if (container) container.innerHTML = '';
     document.getElementById('mic-btn').textContent = '🔴 إيقاف الميكروفون';
     document.getElementById('mic-btn').classList.add('recording');
     document.getElementById('mic-status').textContent = '🔴 يستمع ويتعرف على كلام الخطيب...';
@@ -1012,108 +1017,181 @@ function stopLocalMic() {
 }
 
 // ================================================================
-//  كشف الآيات والأحاديث من النص المسموع
+//  نظام الكشف الجديد — مبني على detection-fix.js
 // ================================================================
-function detectReferences(text) {
-    if (!QURAN_DB && !HADITH_DB) return;
-    const cleanText = cleanArabic(text);
-    const found = [];
 
-    const spokenWords = cleanText.split(/\s+/).filter(w => w.length > 1);
-    // للكشف التلقائي: نحتاج على الأقل 5 كلمات ونسبة تسلسلية ≥ 85%
-    if (spokenWords.length < 4) return;
-    const detectThreshold = 85;
+// قاعدة بيانات الكشف السريع (كلمات مفتاحية للآيات والأحاديث الأكثر ذكراً)
+const DETECTION_DB = [
+  { kw: ['الاعمال بالنيات','الأعمال بالنيات','انما الاعمال'], type: 'hadith', ref: 'البخاري 1',
+    text: 'إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ وَإِنَّمَا لِكُلِّ امْرِئٍّ مَا نَوَى',
+    tafsir: 'من أعظم أحاديث الإسلام — العمل يُقبل بنيته الصادقة.' },
+  { kw: ['وملائكته يصلون على النبي','يصلون على النبي','صلوا عليه وسلموا'], type: 'quran', ref: 'الأحزاب 56',
+    text: 'إِنَّ اللَّهَ وَمَلَائِكَتَهُ يُصَلُّونَ عَلَى النَّبِيِّ ۚ يَا أَيُّهَا الَّذِينَ آمَنُوا صَلُّوا عَلَيْهِ وَسَلِّمُوا تَسْلِيمًا',
+    tafsir: 'أمر الله المؤمنين بالصلاة على النبي ﷺ.' },
+  { kw: ['اتقوا الله حق تقاته','حق تقاته','تقاته ولا تموتن'], type: 'quran', ref: 'آل عمران 102',
+    text: 'يَا أَيُّهَا الَّذِينَ آمَنُوا اتَّقُوا اللَّهَ حَقَّ تُقَاتِهِ وَلَا تَمُوتُنَّ إِلَّا وَأَنتُم مُّسْلِمُونَ',
+    tafsir: 'أمر بالتقوى الحقة والثبات على الإسلام.' },
+  { kw: ['يامر بالعدل والاحسان','العدل والاحسان وإيتاء','العدل والإحسان'], type: 'quran', ref: 'النحل 90',
+    text: 'إِنَّ اللَّهَ يَأْمُرُ بِالْعَدْلِ وَالْإِحْسَانِ وَإِيتَاءِ ذِي الْقُرْبَىٰ وَيَنْهَىٰ عَنِ الْفَحْشَاءِ وَالْمُنكَرِ وَالْبَغْيِ',
+    tafsir: 'آية جامعة تضم أصول الإسلام.' },
+  { kw: ['مع العسر يسرا','ان مع العسر','فان مع العسر','فإن مع العسر'], type: 'quran', ref: 'الشرح 5-6',
+    text: 'فَإِنَّ مَعَ الْعُسْرِ يُسْرًا ۙ إِنَّ مَعَ الْعُسْرِ يُسْرًا',
+    tafsir: 'بشارة عظيمة — لن يغلب عسر يسرين.' },
+  { kw: ['فليقل خيرا او ليصمت','يؤمن بالله واليوم الاخر','فليقل خيرا أو ليصمت'], type: 'hadith', ref: 'البخاري 6018',
+    text: 'مَنْ كَانَ يُؤْمِنُ بِاللَّهِ وَالْيَوْمِ الآخِرِ فَلْيَقُلْ خَيْرًا أَوْ لِيَصْمُتْ',
+    tafsir: 'قاعدة ذهبية في ضبط اللسان.' },
+  { kw: ['الحي القيوم','لا تاخذه سنة ولا نوم','اية الكرسي','آية الكرسي','لا اله الا هو الحي'], type: 'quran', ref: 'البقرة 255',
+    text: 'اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ ۚ لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ',
+    tafsir: 'أعظم آية في القرآن.' },
+  { kw: ['قل هو الله احد','الله الصمد','لم يلد ولم يولد','سورة الاخلاص'], type: 'quran', ref: 'الإخلاص',
+    text: 'قُلْ هُوَ اللَّهُ أَحَدٌ ۙ اللَّهُ الصَّمَدٌ ۙ لَمْ يَلِدْ وَلَمْ يُولَدْ ۙ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ',
+    tafsir: 'تعدل ثلث القرآن.' },
+  { kw: ['كلكم راع وكلكم مسؤول','كلكم راعٍ','مسؤول عن رعيته'], type: 'hadith', ref: 'البخاري 2554',
+    text: 'كُلُّكُمْ رَاعٍ وَكُلُّكُمْ مَسْؤُولٌ عَنْ رَعِيَّتِهِ',
+    tafsir: 'مبدأ المسؤولية في الإسلام.' },
+  { kw: ['وما خلقت الجن والانس','الجن والانس الا ليعبدون','إلا ليعبدون','الا ليعبدون'], type: 'quran', ref: 'الذاريات 56',
+    text: 'وَمَا خَلَقْتُ الْجِنَّ وَالْإِنسَ إِلَّا لِيَعْبُدُونِ',
+    tafsir: 'الغاية الكبرى من وجود الإنسان.' },
+  { kw: ['الحمد لله رب العالمين','رب العالمين','مالك يوم الدين','اهدنا الصراط المستقيم'], type: 'quran', ref: 'الفاتحة',
+    text: 'الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ ۙ الرَّحْمَٰنِ الرَّحِيمِ ۙ مَالِكِ يَوْمِ الدِّينِ',
+    tafsir: 'أم القرآن — تُقرأ في كل ركعة.' },
+  { kw: ['انا اعطيناك الكوثر','إنا أعطيناك الكوثر','الكوثر','فصل لربك وانحر'], type: 'quran', ref: 'الكوثر',
+    text: 'إِنَّا أَعْطَيْنَاكَ الْكَوْثَرَ ۙ فَصَلِّ لِرَبِّكَ وَانْحَرْ ۙ إِنَّ شَانِئَكَ هُوَ الْأَبْتَرُ',
+    tafsir: 'منح الله نبيه ﷺ الكوثر.' },
+  { kw: ['تبارك الذي بيده الملك','بيده الملك وهو على كل شيء قدير','سورة الملك'], type: 'quran', ref: 'الملك 1',
+    text: 'تَبَارَكَ الَّذِي بِيَدِهِ الْمُلْكُ وَهُوَ عَلَىٰ كُلِّ شَيْءٍ قَدِيرٌ',
+    tafsir: 'تشفع لصاحبها يوم القيامة.' },
+  { kw: ['المسلم من سلم المسلمون','سلم المسلمون من لسانه','من لسانه ويده'], type: 'hadith', ref: 'البخاري 10',
+    text: 'الْمُسْلِمُ مَنْ سَلِمَ الْمُسْلِمُونَ مِنْ لِسَانِهِ وَيَدِهِ',
+    tafsir: 'المسلم الحقيقي بسلامة الآخرين منه.' },
+  { kw: ['لا يؤمن احدكم حتى يحب لاخيه','يحب لاخيه ما يحب لنفسه'], type: 'hadith', ref: 'البخاري 13',
+    text: 'لَا يُؤْمِنُ أَحَدُكُمْ حَتَّى يُحِبَّ لِأَخِيهِ مَا يُحِبُّ لِنَفْسِهِ',
+    tafsir: 'أساس الأخوة الإسلامية.' },
+  { kw: ['لا تحزن ان الله معنا','لا تحزن إن الله معنا','إن الله معنا'], type: 'quran', ref: 'التوبة 40',
+    text: 'لَا تَحْزَنْ إِنَّ اللَّهَ مَعَنَا',
+    tafsir: 'قالها النبي ﷺ لأبي بكر في الغار.' },
+  { kw: ['حسبنا الله ونعم الوكيل','نعم الوكيل'], type: 'quran', ref: 'آل عمران 173',
+    text: 'حَسْبُنَا اللَّهُ وَنِعْمَ الْوَكِيلُ',
+    tafsir: 'قالها إبراهيم ﷺ حين أُلقي في النار.' },
+  { kw: ['ان الله مع الصابرين','مع الصابرين'], type: 'quran', ref: 'البقرة 153',
+    text: 'يَا أَيُّهَا الَّذِينَ آمَنُوا اسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ ۚ إِنَّ اللَّهَ مَعَ الصَّابِرِينَ',
+    tafsir: 'الصبر والصلاة مفتاحان للنصر.' },
+  { kw: ['وبشر الصابرين','الذين إذا أصابتهم مصيبة','إذا اصابتهم مصيبة'], type: 'quran', ref: 'البقرة 155-157',
+    text: 'وَبَشِّرِ الصَّابِرِينَ ۙ الَّذِينَ إِذَا أَصَابَتْهُم مُّصِيبَةٌ قَالُوا إِنَّا لِلَّهِ وَإِنَّا إِلَيْهِ رَاجِعُونَ',
+    tafsir: 'بشارة للصابرين على المصائب.' },
+  { kw: ['سلك طريقا يلتمس فيه علما','من سلك طريقا','سهل الله له طريقا الى الجنة'], type: 'hadith', ref: 'مسلم 2699',
+    text: 'مَنْ سَلَكَ طَرِيقًا يَلْتَمِسُ فِيهِ عِلْمًا سَهَّلَ اللَّهُ لَهُ بِهِ طَرِيقًا إِلَى الْجَنَّةِ',
+    tafsir: 'فضل طلب العلم الشرعي.' },
+];
 
-    // بحث في القرآن
-    if (QURAN_DB) {
-        let bestQuran = null;
-        let bestScore = 0;
-        for (const ayah of QURAN_DB) {
-            const score = calcMatchScore(cleanText, ayah.q);
-            if (score > bestScore && score >= detectThreshold) {
-                bestScore = score;
-                bestQuran = { ayah, score };
-            }
-        }
-        if (bestQuran) {
-            const key = `q_${bestQuran.ayah.s}_${bestQuran.ayah.v}`;
-            if (!shownRefs.has(key)) {
-                found.push({ type: 'quran', data: bestQuran.ayah, score: bestQuran.score });
-                shownRefs.add(key);
-            }
-        }
-    }
+// حالة الكشف
 
-    // بحث في الأحاديث
-    if (HADITH_DB) {
-        let bestHadith = null;
-        let bestScore = 0;
-        for (const h of HADITH_DB) {
-            const score = calcMatchScore(cleanText, h.q);
-            if (score > bestScore && score >= detectThreshold) {
-                bestScore = score;
-                bestHadith = { h, score };
-            }
-        }
-        if (bestHadith) {
-            const key = `h_${bestHadith.h.id}`;
-            if (!shownRefs.has(key)) {
-                found.push({ type: 'hadith', data: bestHadith.h, score: bestHadith.score });
-                shownRefs.add(key);
-            }
-        }
-    }
+let _lastShownRef = null;
+let _shownInSession = new Set();
 
-    if (found.length > 0) renderReferences(found);
+function normalizeArabic(text) {
+    if (!text) return '';
+    return text
+        .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+        .replace(/[أإآٱ]/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/ى/g, 'ي')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
-function renderReferences(items) {
-    const box = document.getElementById('references-box');
-    const list = document.getElementById('references-list');
+function calcDetectScore(spokenText, keywordText) {
+    const spoken  = normalizeArabic(spokenText);
+    const keyword = normalizeArabic(keywordText);
+    if (!spoken || !keyword) return 0;
+    if (spoken.includes(keyword)) return 1.0;
+    if (keyword.includes(spoken)) return 0.9;
+    const spWords = spoken.split(' ').filter(w => w.length > 2);
+    const kwWords = keyword.split(' ').filter(w => w.length > 2);
+    if (!spWords.length || !kwWords.length) return 0;
+    let matched = 0;
+    spWords.forEach(sw => {
+        if (kwWords.some(kw => kw.includes(sw) || sw.includes(kw))) matched++;
+    });
+    return matched / Math.max(spWords.length, kwWords.length);
+}
 
-    items.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'ref-item';
+function detectReferences(spokenText) {
+    if (!spokenText || spokenText.trim().length < 4) return;
+    const container = document.getElementById('insight-container');
+    if (!container) return;
 
-        if (item.type === 'quran') {
-            const a = item.data;
-            const scoreColor = item.score >= 90 ? '#1a7a4a' : '#b07800';
-            div.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span class="ref-type-badge ref-type-quran">📖 آية قرآنية</span>
-                    <span style="font-size:10px;font-weight:bold;color:${scoreColor};background:${item.score>=90?'#e8f5ee':'#fff8e1'};padding:2px 8px;border-radius:10px;">تطابق ${item.score}%</span>
-                </div>
-                <div class="ref-text">﴿ ${a.t} ﴾</div>
-                <div class="ref-source">سورة ${a.sn} — الآية ${a.v} — جزء ${a.j}</div>
-                ${a.e ? `<div class="ref-meaning"><strong>📘 المعنى:</strong> ${a.e}</div>` : ''}
-            `;
-        } else {
-            const h = item.data;
-            const scoreColor = item.score >= 90 ? '#1a7a4a' : '#b07800';
-            div.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span class="ref-type-badge ref-type-hadith">✨ حديث نبوي</span>
-                    <span style="font-size:10px;font-weight:bold;color:${scoreColor};background:${item.score>=90?'#e8f5ee':'#fff8e1'};padding:2px 8px;border-radius:10px;">تطابق ${item.score}%</span>
-                </div>
-                <div class="ref-text">« ${h.t} »</div>
-                <div class="ref-source">${h.b} — حديث رقم ${h.n}</div>
-            `;
-        }
-        list.appendChild(div);
+    const candidates = [];
+    DETECTION_DB.forEach(entry => {
+        let bestScore = 0;
+        entry.kw.forEach(keyword => {
+            const score = calcDetectScore(spokenText, keyword);
+            if (score > bestScore) bestScore = score;
+        });
+        if (bestScore >= 0.45) candidates.push({ ...entry, score: bestScore });
     });
 
-    box.classList.add('visible');
+    if (!candidates.length) return;
+
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+
+    if (best.ref === _lastShownRef) return;
+    _lastShownRef = best.ref;
+    _shownInSession.add(best.ref);
+
+    showInsightCard(best, container);
 }
 
-function clearReferenceBox() {
-    const box = document.getElementById('references-box');
-    const list = document.getElementById('references-list');
-    if (box) box.classList.remove('visible');
-    // ننتظر انتهاء الترانزيشن قبل المسح
-    setTimeout(() => {
-        if (list) list.innerHTML = '';
-        shownRefs.clear();
-    }, 400);
+function showInsightCard(entry, container) {
+    const old = container.querySelector('.insight-card');
+    if (old) {
+        old.style.opacity = '0';
+        old.style.transform = 'translateY(-8px)';
+        old.style.transition = 'all 0.25s ease';
+        setTimeout(() => old.remove(), 250);
+    }
+
+    const card = document.createElement('div');
+    card.className = 'insight-card';
+    card.style.cssText = `
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-top: 12px;
+        border: 1px solid ${entry.type === 'quran' ? 'rgba(141,73,58,0.3)' : 'rgba(58,107,141,0.3)'};
+        background: ${entry.type === 'quran'
+            ? 'linear-gradient(135deg,rgba(253,240,238,0.95),rgba(255,248,246,0.95))'
+            : 'linear-gradient(135deg,rgba(238,243,248,0.95),rgba(246,250,255,0.95))'};
+        animation: insightSlideIn 0.35s cubic-bezier(0.34,1.4,0.64,1) both;
+        direction: rtl;
+    `;
+
+    const scoreColor = entry.score >= 0.9 ? '#1a7a4a' : '#b07800';
+    const typeBg    = entry.type === 'quran' ? '#8D493A' : '#3a6b8d';
+
+    card.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <span style="font-size:11px;font-weight:bold;color:white;background:${typeBg};padding:3px 10px;border-radius:6px;">
+                ${entry.type === 'quran' ? '📖 آية قرآنية' : '✨ حديث نبوي'}
+            </span>
+            <span style="font-size:10px;font-weight:bold;color:${scoreColor};background:${entry.score>=0.9?'#e8f5ee':'#fff8e1'};padding:2px 8px;border-radius:10px;">
+                تطابق ${Math.round(entry.score*100)}%
+            </span>
+        </div>
+        <div style="font-size:16px;font-weight:bold;color:#111;line-height:1.9;font-family:'Traditional Arabic',system-ui;margin-bottom:8px;padding:10px;background:rgba(255,255,255,0.7);border-radius:8px;">
+            ${entry.type === 'quran' ? '﴿' : '«'} ${entry.text} ${entry.type === 'quran' ? '﴾' : '»'}
+        </div>
+        <div style="font-size:11px;color:#555;font-weight:bold;margin-bottom:4px;">📍 ${entry.ref}</div>
+        <div style="font-size:12px;color:#666;line-height:1.7;border-right:3px solid ${typeBg};padding-right:8px;">${entry.tafsir}</div>
+    `;
+
+    container.appendChild(card);
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function resetDetection() {
+    _lastShownRef = null;
+    _shownInSession.clear();
 }
 
 // ================================================================
