@@ -1121,39 +1121,37 @@ function calcDetectScore(spokenText, keywordText) {
 }
 
 // ================================================================
-//  نظام الكشف الهجين: Gemini AI + بحث محلي
+//  نظام الكشف الهجين: Gemini AI أولاً — بحث محلي فقط عند الفشل
 // ================================================================
 async function detectReferences(spokenText) {
     if (!spokenText || spokenText.trim().length < 6) return;
     const container = document.getElementById('insight-container');
     if (!container) return;
 
-    // عرض مؤشر التحليل
+    // إذا كان هناك طلب Gemini جارٍ بالفعل، نتجاهل النص الجديد حتى ينتهي السابق
+    if (geminiPending) return;
+
+    geminiPending = true;
     showAnalyzingIndicator(container);
 
-    // ── محاولة Gemini أولاً ──
-    if (!geminiPending) {
-        geminiPending = true;
-        try {
-            const result = await askGemini(spokenText);
-            geminiPending = false;
-            if (result) {
-                hideAnalyzingIndicator(container);
-                if (result.ref !== _lastShownRef) {
-                    _lastShownRef = result.ref;
-                    showInsightCard(result, container);
-                }
-                return;
-            }
-        } catch(e) {
-            geminiPending = false;
-            console.warn('Gemini fallback to local:', e.message);
-        }
-    }
+    try {
+        const result = await askGemini(spokenText);
+        geminiPending = false;
+        hideAnalyzingIndicator(container);
 
-    // ── Fallback: بحث محلي إذا فشل Gemini ──
-    hideAnalyzingIndicator(container);
-    detectLocalFallback(spokenText, container);
+        if (result && result.ref !== _lastShownRef) {
+            _lastShownRef = result.ref;
+            showInsightCard(result, container);
+        } else if (!result) {
+            // Gemini لم يجد آية أو حديث — نجرب البحث المحلي
+            detectLocalFallback(spokenText, container);
+        }
+    } catch(e) {
+        geminiPending = false;
+        hideAnalyzingIndicator(container);
+        console.warn('فشل Gemini، تحويل للبحث المحلي:', e.message);
+        detectLocalFallback(spokenText, container);
+    }
 }
 
 async function askGemini(spokenText) {
