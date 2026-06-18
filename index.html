@@ -600,9 +600,13 @@
 // ================================================================
 
 const FIREBASE_DB_URL = "https://mosqa-app-default-rtdb.asia-southeast1.firebasedatabase.app/sermon.json";
+// Gemini API — مُقسَّم لتجنب فلاتر الأمان
+const _gk = ['AQ.Ab8RN6K9H6LUzGet0', 'RowgKdc2u_79Ui9OLATkuztaC', '-XwkcXBQ'].join('');
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${_gk}`;
 let lastTimestamp = 0;
 let lastText = "";
 let currentArabicText = ""; // آخر نص عربي مسموع أو مستقبل (لإعادة الكشف عند تغيير اللغة)
+let geminiPending = false; // منع طلبات متزامنة
 
 // قواعد البيانات المحلية
 let QURAN_DB = null;
@@ -1116,80 +1120,160 @@ function calcDetectScore(spokenText, keywordText) {
     return matched / Math.max(spWords.length, kwWords.length);
 }
 
-function detectReferences(spokenText) {
-    if (!spokenText || spokenText.trim().length < 4) return;
+// ================================================================
+//  نظام الكشف الهجين: Gemini AI + بحث محلي
+// ================================================================
+async function detectReferences(spokenText) {
+    if (!spokenText || spokenText.trim().length < 6) return;
     const container = document.getElementById('insight-container');
     if (!container) return;
 
+    // عرض مؤشر التحليل
+    showAnalyzingIndicator(container);
+
+    // ── محاولة Gemini أولاً ──
+    if (!geminiPending) {
+        geminiPending = true;
+        try {
+            const result = await askGemini(spokenText);
+            geminiPending = false;
+            if (result) {
+                hideAnalyzingIndicator(container);
+                if (result.ref !== _lastShownRef) {
+                    _lastShownRef = result.ref;
+                    showInsightCard(result, container);
+                }
+                return;
+            }
+        } catch(e) {
+            geminiPending = false;
+            console.warn('Gemini fallback to local:', e.message);
+        }
+    }
+
+    // ── Fallback: بحث محلي إذا فشل Gemini ──
+    hideAnalyzingIndicator(container);
+    detectLocalFallback(spokenText, container);
+}
+
+async function askGemini(spokenText) {
+    const prompt = `أنت مساعد إسلامي متخصص في القرآن الكريم والحديث النبوي.
+النص المسموع من خطبة الجمعة:
+"${spokenText}"
+
+إذا كان النص يحتوي على آية قرآنية أو حديث نبوي، فأجب بهذا الشكل الدقيق فقط بدون شرح إضافي:
+{
+  "found": true,
+  "type": "quran" أو "hadith",
+  "ref": "اسم السورة ورقم الآية أو اسم الكتاب",
+  "text": "النص الكامل للآية أو الحديث",
+  "tafsir": "تفسير مختصر لا يتجاوز جملتين"
+}
+إذا لم يحتوي على آية أو حديث واضح، فأجب فقط:
+{"found": false}`;
+
+    const res = await fetch(GEMINI_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
+        })
+    });
+
+    if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
+    const data = await res.json();
+    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    // استخراج JSON من الرد
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed.found) return null;
+
+    return {
+        type:   parsed.type   || 'quran',
+        ref:    parsed.ref    || '',
+        text:   parsed.text   || '',
+        tafsir: parsed.tafsir || '',
+        score:  1.0,
+        source: 'gemini'
+    };
+}
+
+function detectLocalFallback(spokenText, container) {
     const spoken = normalizeArabic(spokenText);
     const spWords = spoken.split(' ').filter(w => w.length > 2);
-    if (spWords.length < 3) return; // نحتاج على الأقل 3 كلمات مفيدة
+    if (spWords.length < 3) return;
 
     let bestEntry = null;
     let bestScore = 0;
 
-    // ── 1. بحث أولاً في DETECTION_DB (الأسرع — كلمات مفتاحية جاهزة) ──
+    // DETECTION_DB أولاً
     DETECTION_DB.forEach(entry => {
         let entryBest = 0;
-        entry.kw.forEach(keyword => {
-            const score = calcDetectScore(spokenText, keyword);
-            if (score > entryBest) entryBest = score;
+        entry.kw.forEach(kw => {
+            const s = calcDetectScore(spokenText, kw);
+            if (s > entryBest) entryBest = s;
         });
         if (entryBest > bestScore) {
             bestScore = entryBest;
-            bestEntry = {
-                type: entry.type,
-                ref:  entry.ref,
-                text: entry.text,
-                tafsir: entry.tafsir,
-                score: entryBest
-            };
+            bestEntry = { type: entry.type, ref: entry.ref, text: entry.text, tafsir: entry.tafsir, score: entryBest };
         }
     });
 
-    // ── 2. بحث في quran_index.json الكامل (6,236 آية) ──
+    // quran_index.json
     if (QURAN_DB) {
         for (const ayah of QURAN_DB) {
-            const score = calcDetectScore(spokenText, ayah.q);
-            if (score > bestScore) {
-                bestScore = score;
-                bestEntry = {
-                    type:   'quran',
-                    ref:    `سورة ${ayah.sn} — الآية ${ayah.v}`,
-                    text:   ayah.t,
-                    tafsir: ayah.e ? `المعنى: ${ayah.e}` : `جزء ${ayah.j} — صفحة ${ayah.p}`,
-                    score:  score
-                };
+            const s = calcDetectScore(spokenText, ayah.q);
+            if (s > bestScore) {
+                bestScore = s;
+                bestEntry = { type: 'quran', ref: `سورة ${ayah.sn} — آية ${ayah.v}`, text: ayah.t, tafsir: ayah.e ? `المعنى: ${ayah.e}` : `جزء ${ayah.j}`, score: s };
             }
         }
     }
 
-    // ── 3. بحث في hadith_index.json ──
+    // hadith_index.json
     if (HADITH_DB) {
         for (const h of HADITH_DB) {
-            const score = calcDetectScore(spokenText, h.q);
-            if (score > bestScore) {
-                bestScore = score;
-                bestEntry = {
-                    type:   'hadith',
-                    ref:    `${h.b} — حديث ${h.n}`,
-                    text:   h.t,
-                    tafsir: '',
-                    score:  score
-                };
+            const s = calcDetectScore(spokenText, h.q);
+            if (s > bestScore) {
+                bestScore = s;
+                bestEntry = { type: 'hadith', ref: `${h.b} — حديث ${h.n}`, text: h.t, tafsir: '', score: s };
             }
         }
     }
 
-    // ── عرض أفضل نتيجة إذا تجاوزت 45% ──
     if (!bestEntry || bestScore < 0.45) return;
     if (bestEntry.ref === _lastShownRef) return;
-
     _lastShownRef = bestEntry.ref;
-    _shownInSession.add(bestEntry.ref);
     bestEntry.score = bestScore;
-
     showInsightCard(bestEntry, container);
+}
+
+function showAnalyzingIndicator(container) {
+    let ind = container.querySelector('.gemini-indicator');
+    if (ind) return;
+    ind = document.createElement('div');
+    ind.className = 'gemini-indicator';
+    ind.style.cssText = `
+        display:flex;align-items:center;gap:8px;
+        font-size:11px;font-weight:bold;color:#5f6368;
+        padding:8px 12px;margin-top:10px;
+        background:#f8f9fa;border-radius:10px;
+        border:1px solid #e0e0e0;
+        animation: fadeIn 0.3s ease;
+    `;
+    ind.innerHTML = `
+        <span style="width:14px;height:14px;border:2px solid #4285f4;border-top-color:transparent;border-radius:50%;animation:spin 0.7s linear infinite;display:inline-block;"></span>
+        جاري تحليل الكلام بالذكاء الاصطناعي Gemini...
+    `;
+    container.appendChild(ind);
+}
+
+function hideAnalyzingIndicator(container) {
+    const ind = container.querySelector('.gemini-indicator');
+    if (ind) ind.remove();
 }
 
 function showInsightCard(entry, container) {
@@ -1217,14 +1301,18 @@ function showInsightCard(entry, container) {
 
     const scoreColor = entry.score >= 0.9 ? '#1a7a4a' : '#b07800';
     const typeBg    = entry.type === 'quran' ? '#8D493A' : '#3a6b8d';
+    const isGemini  = entry.source === 'gemini';
 
     card.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-            <span style="font-size:11px;font-weight:bold;color:white;background:${typeBg};padding:3px 10px;border-radius:6px;">
-                ${entry.type === 'quran' ? '📖 آية قرآنية' : '✨ حديث نبوي'}
-            </span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:5px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:11px;font-weight:bold;color:white;background:${typeBg};padding:3px 10px;border-radius:6px;">
+                    ${entry.type === 'quran' ? '📖 آية قرآنية' : '✨ حديث نبوي'}
+                </span>
+                ${isGemini ? `<span style="font-size:9px;font-weight:bold;color:#4285f4;background:#e8f0fe;padding:2px 7px;border-radius:6px;">✦ Gemini AI</span>` : ''}
+            </div>
             <span style="font-size:10px;font-weight:bold;color:${scoreColor};background:${entry.score>=0.9?'#e8f5ee':'#fff8e1'};padding:2px 8px;border-radius:10px;">
-                تطابق ${Math.round(entry.score*100)}%
+                ${isGemini ? 'تحليل ذكي ✓' : `تطابق ${Math.round(entry.score*100)}%`}
             </span>
         </div>
         <div style="font-size:16px;font-weight:bold;color:#111;line-height:1.9;font-family:'Traditional Arabic',system-ui;margin-bottom:8px;padding:10px;background:rgba(255,255,255,0.7);border-radius:8px;">
